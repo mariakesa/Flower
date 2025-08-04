@@ -6,6 +6,14 @@ from matplotlib import animation
 from mpl_toolkits.mplot3d import Axes3D
 from sklearn.decomposition import PCA
 import torch.nn.functional as F
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+from matplotlib import animation, cm
+from matplotlib.colors import Normalize
+from mpl_toolkits.mplot3d.art3d import Line3DCollection
+from IPython.display import HTML
+from sklearn.decomposition import PCA
 
 class TimeContrastiveSampler:
     def __init__(self, data, window_size=5, batch_size=128):
@@ -145,34 +153,7 @@ def train_cebra_time_learnable_siren(
 
     return encoder
 
-def train_cebra_time_multifreq_siren(data, input_dim, hidden_dim, output_dim,
-                                     frequencies=[5, 10, 30, 60], num_layers=3,
-                                     epochs=1000, batch_size=128, learning_rate=1e-3,
-                                     model_path="cebra_multifreq_siren.pt"):
-    encoder = MultiFreqSIRENEncoder(input_dim, hidden_dim, output_dim,
-                                    frequencies=frequencies, num_layers=num_layers)
-    sampler = TimeContrastiveSampler(data, window_size=5, batch_size=batch_size)
-    criterion = ContrastiveLoss(temperature=0.1)
-    optimizer = torch.optim.Adam(encoder.parameters(), lr=learning_rate)
 
-    for epoch in range(epochs):
-        ref, pos, neg = sampler.sample()
-        z_ref = encoder(ref)
-        z_pos = encoder(pos)
-        z_neg = encoder(neg)
-
-        loss = criterion(z_ref, z_pos, z_neg)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        if epoch % 100 == 0:
-            print(f"[MultiFreq SIREN] Epoch {epoch}, Loss: {loss.item():.4f}")
-
-    torch.save(encoder.state_dict(), model_path)
-    print(f"Multi-frequency SIREN model saved to {model_path}")
-
-    return encoder
 
 def animate_embedding_3d_learnable_siren(data, encoder_path, input_dim, hidden_dim, output_dim,
                                          num_layers=3, num_frequencies=6,
@@ -226,3 +207,150 @@ def animate_embedding_3d_learnable_siren(data, encoder_path, input_dim, hidden_d
         ani.save(save_path, writer="ffmpeg", fps=20)
 
     print(f"Saved rotating embedding animation to {save_path}")
+
+def animate_embedding_3d_learnable_siren(data, encoder_path, input_dim, hidden_dim, output_dim,
+                                         num_layers=3, num_frequencies=6,
+                                         omega_init_range=(1.0, 60.0),
+                                         title="Flower embedding",
+                                         fps=20, save_path='flower_embedding_line_scrambled_small.mp4',
+                                         scramble=True, seed=42):
+    # Optional: scramble data along time axis
+    if scramble:
+        np.random.seed(seed)
+        data = data.copy()
+        np.random.shuffle(data)  # Scramble time order
+
+    # Load trained model
+    encoder = LearnableFreqSIRENEncoder(
+        input_dim=input_dim,
+        hidden_dim=hidden_dim,
+        output_dim=output_dim,
+        num_layers=num_layers,
+        num_frequencies=num_frequencies,
+        omega_init_range=omega_init_range
+    )
+    encoder.load_state_dict(torch.load(encoder_path, map_location='cpu'))
+    encoder.eval()
+
+    # Get embeddings
+    with torch.no_grad():
+        embeddings = encoder(torch.tensor(data, dtype=torch.float32))
+
+    if output_dim > 3:
+        embeddings = PCA(n_components=3).fit_transform(embeddings.numpy())
+    else:
+        embeddings = embeddings.numpy()
+
+    # Prepare line segments for time-colored line
+    points = embeddings.reshape(-1, 1, 3)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+    norm = Normalize(0, len(segments))
+    colors = cm.rainbow(norm(np.arange(len(segments))))
+
+    # Setup figure
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.set_title(title, fontsize=14)
+    ax.set_xlabel("Latent 1", fontsize=12)
+    ax.set_ylabel("Latent 2", fontsize=12)
+    ax.set_zlabel("Latent 3", fontsize=12)
+
+    # Create line collection
+    lc = Line3DCollection(segments, colors=colors, linewidth=2)
+    ax.add_collection3d(lc)
+    ax.set_xlim(embeddings[:, 0].min(), embeddings[:, 0].max())
+    ax.set_ylim(embeddings[:, 1].min(), embeddings[:, 1].max())
+    ax.set_zlim(embeddings[:, 2].min(), embeddings[:, 2].max())
+
+    # Rotation update function
+    def update(angle):
+        ax.view_init(elev=30, azim=angle)
+        return fig,
+
+    # Animate
+    ani = animation.FuncAnimation(fig, update, frames=np.arange(0, 360, 2), blit=False, interval=1000/fps)
+
+    if save_path:
+        if save_path.endswith(".gif"):
+            ani.save(save_path, writer="pillow", fps=fps)
+        else:
+            ani.save(save_path, writer="ffmpeg", fps=fps)
+        print(f"Saved rotating embedding animation to {save_path}")
+    else:
+        plt.close(fig)
+        return HTML(ani.to_jshtml())
+    
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+from matplotlib import animation, cm
+from matplotlib.colors import Normalize
+from mpl_toolkits.mplot3d.art3d import Line3DCollection
+from IPython.display import HTML
+from sklearn.decomposition import PCA
+
+
+def animate_embedding_3d_learnable_siren(data, encoder_path, input_dim, hidden_dim, output_dim,
+                                         num_layers=3, num_frequencies=6,
+                                         omega_init_range=(1.0, 60.0),
+                                         title="Flower embedding",
+                                         fps=20, save_path='flower_embedding_line_more_points.mp4'):
+    # Load trained model
+    encoder = LearnableFreqSIRENEncoder(
+        input_dim=input_dim,
+        hidden_dim=hidden_dim,
+        output_dim=output_dim,
+        num_layers=num_layers,
+        num_frequencies=num_frequencies,
+        omega_init_range=omega_init_range
+    )
+    encoder.load_state_dict(torch.load(encoder_path, map_location='cpu'))
+    encoder.eval()
+
+    # Get embeddings
+    with torch.no_grad():
+        embeddings = encoder(torch.tensor(data, dtype=torch.float32))
+
+    if output_dim > 3:
+        embeddings = PCA(n_components=3).fit_transform(embeddings.numpy())
+    else:
+        embeddings = embeddings.numpy()
+
+    # Prepare line segments for time-colored line
+    points = embeddings.reshape(-1, 1, 3)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+    norm = Normalize(0, len(segments))
+    colors = cm.rainbow(norm(np.arange(len(segments))))
+
+    # Setup figure
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.set_title(title, fontsize=14)
+    ax.set_xlabel("Latent 1", fontsize=12)
+    ax.set_ylabel("Latent 2", fontsize=12)
+    ax.set_zlabel("Latent 3", fontsize=12)
+
+    # Create line collection
+    lc = Line3DCollection(segments, colors=colors, linewidth=2)
+    ax.add_collection3d(lc)
+    ax.set_xlim(embeddings[:, 0].min(), embeddings[:, 0].max())
+    ax.set_ylim(embeddings[:, 1].min(), embeddings[:, 1].max())
+    ax.set_zlim(embeddings[:, 2].min(), embeddings[:, 2].max())
+
+    # Rotation update function
+    def update(angle):
+        ax.view_init(elev=30, azim=angle)
+        return fig,
+
+    # Animate
+    ani = animation.FuncAnimation(fig, update, frames=np.arange(0, 360, 2), blit=False, interval=1000/fps)
+
+    if save_path:
+        if save_path.endswith(".gif"):
+            ani.save(save_path, writer="pillow", fps=fps)
+        else:
+            ani.save(save_path, writer="ffmpeg", fps=fps)
+        print(f"Saved rotating embedding animation to {save_path}")
+    else:
+        plt.close(fig)
+        return HTML(ani.to_jshtml())
