@@ -2,7 +2,6 @@ from flower import train_reversible_flower, animate_embedding_3d_reversible_flow
 import numpy as np
 
 lfp_data=np.load('/home/maria/Flower/data/lfp_signal.npy')
-
 data=lfp_data
 input_dim=95
 hidden_dim=100
@@ -30,5 +29,6 @@ animate_embedding_3d_reversible_flower(
     output_dim=3,
     num_layers=3,
     num_frequencies=6,
-    omega_init_range=(1.0, 60.0),
+    omega_init_range=(0.5, 10.0),
     title="Flower embedding")
+

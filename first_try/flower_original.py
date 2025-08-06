@@ -1,4 +1,3 @@
-# Re-run the code after state reset
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,12 +7,13 @@ from matplotlib import animation, cm
 from matplotlib.colors import Normalize
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from sklearn.decomposition import PCA
+import os
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Reversible Activation Layer with tanh normalization
+# Reversible Activation Layer
 class ReversibleFlowerLayer(nn.Module):
-    def __init__(self, in_features, out_features, num_frequencies=4, is_first=False, omega_init_range=(0.5, 10.0)):
+    def __init__(self, in_features, out_features, num_frequencies=4, is_first=False, omega_init_range=(1.0, 60.0)):
         super().__init__()
         self.linear = nn.Linear(in_features, out_features)
         self.is_first = is_first
@@ -34,43 +34,32 @@ class ReversibleFlowerLayer(nn.Module):
             else:
                 bound = 6 / self.linear.in_features
                 self.linear.weight.uniform_(-bound, bound)
-
+                
     def forward(self, x):
-        z = self.linear(x).unsqueeze(-1)  # [B, out_features, 1]
-
-        # Normalize z across batch
-        z_mean = z.mean(dim=0, keepdim=True)
-        z_std = z.std(dim=0, keepdim=True) + 1e-6
-        z = (z - z_mean) / z_std
-
+        z = self.linear(x).unsqueeze(-1)
         tanh_scaled = torch.tanh(self.omega * z)
         safe_input = torch.clamp(tanh_scaled, min=-0.999999, max=0.999999)
         out = torch.arcsin(safe_input)
         return out.view(x.shape[0], -1)
-
-
+    
 # ─────────────────────────────────────────────────────────────────────────────
 # Reversible Flower Encoder
 class ReversibleFlowerEncoder(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim,
-                 num_layers=3, num_frequencies=4, omega_init_range=(0.5, 10.0)):
+                 num_layers=3, num_frequencies=4, omega_init_range=(1.0, 60.0)):
         super().__init__()
 
-        layers = []
-        in_dim = input_dim
-        for i in range(num_layers - 1):
-            is_first = i == 0
-            layer = ReversibleFlowerLayer(
-                in_features=in_dim,
-                out_features=hidden_dim,
-                num_frequencies=num_frequencies,
-                is_first=is_first,
-                omega_init_range=omega_init_range
-            )
-            layers.append(layer)
-            in_dim = hidden_dim * num_frequencies  # update for next layer
+        layers = [
+            ReversibleFlowerLayer(input_dim, hidden_dim, num_frequencies, is_first=True, omega_init_range=omega_init_range)
+        ]
 
-        layers.append(nn.Linear(in_dim, output_dim))
+        for _ in range(num_layers - 2):
+            layers.append(
+                ReversibleFlowerLayer(hidden_dim * num_frequencies, hidden_dim,
+                                      num_frequencies, is_first=False, omega_init_range=omega_init_range)
+            )
+
+        layers.append(nn.Linear(hidden_dim * num_frequencies, output_dim))
         self.network = nn.Sequential(*layers)
 
     def forward(self, x):
@@ -112,7 +101,6 @@ class ContrastiveLoss(nn.Module):
         labels = torch.zeros(z_ref.size(0), dtype=torch.long)
         loss = F.cross_entropy(logits, labels)
         return loss
-
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -221,3 +209,4 @@ def animate_embedding_3d_reversible_flower(data, encoder_path, input_dim, hidden
     else:
         plt.close(fig)
         return ani
+
