@@ -1,5 +1,3 @@
-import torch
-import torch.nn as nn
 # Re-run the code after state reset
 import torch
 import torch.nn as nn
@@ -12,24 +10,13 @@ from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from sklearn.decomposition import PCA
 
 
-class InvertibleNorm(nn.Module):
-    """Learnable affine normalization layer: z ↦ γ * z + β"""
-    def __init__(self, num_features):
-        super().__init__()
-        self.gamma = nn.Parameter(torch.ones(1, num_features, 1))  # scaling
-        self.beta = nn.Parameter(torch.zeros(1, num_features, 1))  # shifting
-
-    def forward(self, z):
-        return self.gamma * z + self.beta
-
-    def inverse(self, z_hat):
-        return (z_hat - self.beta) / (self.gamma + 1e-8)
+# ─────────────────────────────────────────────────────────────────────────────
+# Reversible Activation Layer with tanh normalization
 class ReversibleFlowerLayer(nn.Module):
     def __init__(self, in_features, out_features, num_frequencies=4, is_first=False, omega_init_range=(0.5, 10.0)):
         super().__init__()
         self.linear = nn.Linear(in_features, out_features)
         self.is_first = is_first
-        self.norm = InvertibleNorm(out_features)
 
         low, high = omega_init_range
         self.omega = nn.Parameter(
@@ -39,10 +26,6 @@ class ReversibleFlowerLayer(nn.Module):
         self._init_weights()
         self.out_features = out_features
         self.num_frequencies = num_frequencies
-        self.skip_proj = (
-            nn.Linear(in_features, out_features * num_frequencies)
-            if in_features != out_features * num_frequencies else nn.Identity()
-        )
 
     def _init_weights(self):
         with torch.no_grad():
@@ -53,17 +36,20 @@ class ReversibleFlowerLayer(nn.Module):
                 self.linear.weight.uniform_(-bound, bound)
 
     def forward(self, x):
-        z = self.linear(x).unsqueeze(-1)      # [B, out_features, 1]
-        z = self.norm(z)                      # Apply invertible normalization
+        z = self.linear(x).unsqueeze(-1)  # [B, out_features, 1]
+
+        # Normalize z across batch
+        z_mean = z.mean(dim=0, keepdim=True)
+        z_std = z.std(dim=0, keepdim=True) + 1e-6
+        z = (z - z_mean) / z_std
+
         tanh_scaled = torch.tanh(self.omega * z)
         safe_input = torch.clamp(tanh_scaled, min=-0.999999, max=0.999999)
-        out = torch.arcsin(safe_input)        # [B, out_features, K]
-        out = out.view(x.shape[0], -1)
-
-        skip = self.skip_proj(x)
-        return out + skip  # Skip connection added here
+        out = torch.arcsin(safe_input)
+        return out.view(x.shape[0], -1)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
 # Reversible Flower Encoder
 class ReversibleFlowerEncoder(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim,
@@ -94,7 +80,7 @@ class ReversibleFlowerEncoder(nn.Module):
 # ─────────────────────────────────────────────────────────────────────────────
 # Time-Contrastive Sampler and Loss
 class TimeContrastiveSampler:
-    def __init__(self, data, window_size=25, batch_size=128):
+    def __init__(self, data, window_size=5, batch_size=128):
         self.data = data
         self.window_size = window_size
         self.batch_size = batch_size
@@ -153,7 +139,7 @@ def train_reversible_flower(
         omega_init_range=omega_init_range
     )
 
-    sampler = TimeContrastiveSampler(data, window_size=25, batch_size=batch_size)
+    sampler = TimeContrastiveSampler(data, window_size=5, batch_size=batch_size)
     criterion = ContrastiveLoss(temperature=0.1)
     optimizer = torch.optim.Adam(encoder.parameters(), lr=learning_rate)
 
