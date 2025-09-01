@@ -127,7 +127,23 @@ class ContrastiveLoss(nn.Module):
         loss = F.cross_entropy(logits, labels)
         return loss
 
+class ContrastiveLoss(nn.Module):
+    def __init__(self, temperature=0.1):
+        super().__init__()
+        self.temperature = temperature
 
+    def forward(self, z_ref, z_pos, z_neg):
+        z_ref = F.normalize(z_ref, dim=1)
+        z_pos = F.normalize(z_pos, dim=1)
+        z_neg = F.normalize(z_neg, dim=1)
+
+        pos_sim = torch.sum(z_ref * z_pos, dim=1) / self.temperature
+        neg_sim = torch.sum(z_ref * z_neg, dim=1) / self.temperature
+
+        logits = torch.stack([pos_sim, neg_sim], dim=1)
+        labels = torch.zeros(z_ref.size(0), dtype=torch.long)
+        loss = F.cross_entropy(logits, labels)
+        return loss
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Training Function

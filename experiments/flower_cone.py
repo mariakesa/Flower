@@ -43,7 +43,7 @@ class ReversibleFlowerLayer(nn.Module):
         z_std = z.std(dim=0, keepdim=True) + 1e-6
         z = (z - z_mean) / z_std
 
-        tanh_scaled = torch.tanh(self.omega * z)
+        tanh_scaled = torch.tanh(z)
         safe_input = torch.clamp(tanh_scaled, min=-0.999999, max=0.999999)
         out = torch.arcsin(safe_input)
         return out.view(x.shape[0], -1)
@@ -68,7 +68,7 @@ class ReversibleFlowerEncoder(nn.Module):
                 omega_init_range=omega_init_range
             )
             layers.append(layer)
-            in_dim = hidden_dim * num_frequencies  # update for next layer
+            in_dim = hidden_dim  # update for next layer
 
         layers.append(nn.Linear(in_dim, output_dim))
         self.network = nn.Sequential(*layers)

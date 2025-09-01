@@ -43,7 +43,7 @@ class ReversibleFlowerLayer(nn.Module):
         z_std = z.std(dim=0, keepdim=True) + 1e-6
         z = (z - z_mean) / z_std
 
-        tanh_scaled = torch.tanh(self.omega * z)
+        tanh_scaled = torch.tanh(z)
         safe_input = torch.clamp(tanh_scaled, min=-0.999999, max=0.999999)
         out = torch.arcsin(safe_input)
         return out.view(x.shape[0], -1)
@@ -68,7 +68,7 @@ class ReversibleFlowerEncoder(nn.Module):
                 omega_init_range=omega_init_range
             )
             layers.append(layer)
-            in_dim = hidden_dim * num_frequencies  # update for next layer
+            in_dim = hidden_dim #* num_frequencies  # update for next layer
 
         layers.append(nn.Linear(in_dim, output_dim))
         self.network = nn.Sequential(*layers)
@@ -78,14 +78,13 @@ class ReversibleFlowerEncoder(nn.Module):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Time-Contrastive Sampler and Loss
 class TimeContrastiveSampler:
     def __init__(self, data, window_size=5, batch_size=128):
-        self.data = data
+        self.data = data  # Shape: [T, D]
         self.window_size = window_size
         self.batch_size = batch_size
         self.T = data.shape[0]
-
+    '''
     def sample(self):
         indices = np.random.randint(self.window_size, self.T - self.window_size, size=self.batch_size)
         ref = self.data[indices]
@@ -93,8 +92,22 @@ class TimeContrastiveSampler:
         neg_indices = np.random.randint(0, self.T, size=self.batch_size)
         neg = self.data[neg_indices]
         return torch.tensor(ref, dtype=torch.float32), torch.tensor(pos, dtype=torch.float32), torch.tensor(neg, dtype=torch.float32)
+    '''
 
+    def sample(self):
+        indices = np.random.randint(self.window_size, self.T - self.window_size, size=self.batch_size)
+        ref = self.data[indices]
+        pos = self.data[indices + np.random.randint(1, self.window_size + 1)]
 
+        # 100 negatives per sample = [batch_size * 100, D]
+        neg_indices = np.random.randint(0, self.T, size=self.batch_size * 100)
+        neg = self.data[neg_indices]
+
+        return (
+            torch.tensor(ref, dtype=torch.float32),
+            torch.tensor(pos, dtype=torch.float32),
+            torch.tensor(neg, dtype=torch.float32),
+        )
 class ContrastiveLoss(nn.Module):
     def __init__(self, temperature=0.1):
         super().__init__()
@@ -112,6 +125,48 @@ class ContrastiveLoss(nn.Module):
         labels = torch.zeros(z_ref.size(0), dtype=torch.long)
         loss = F.cross_entropy(logits, labels)
         return loss
+    
+class ContrastiveLoss(nn.Module):
+    def __init__(self, temperature=0.1, num_negatives=100):
+        super().__init__()
+        self.temperature = temperature
+        self.num_negatives = num_negatives
+
+    def forward(self, z_ref, z_pos, z_negs):
+        """
+        z_ref: [N, D]
+        z_pos: [N, D]
+        z_negs: [N * K, D] or [N, K, D]
+        """
+        N, D = z_ref.shape
+        K = self.num_negatives
+
+        # If z_negs is 2D, reshape it into [N, K, D]
+        if z_negs.dim() == 2:
+            try:
+                z_negs = z_negs.view(N, K, D)
+            except RuntimeError:
+                raise ValueError(f"z_negs has shape {z_negs.shape}, but expected ({N*K}, {D})")
+
+        # Normalize everything
+        z_ref = F.normalize(z_ref, dim=1)       # [N, D]
+        z_pos = F.normalize(z_pos, dim=1)       # [N, D]
+        z_negs = F.normalize(z_negs, dim=2)     # [N, K, D]
+
+        # Positive similarities: [N, 1]
+        pos_sim = torch.sum(z_ref * z_pos, dim=1, keepdim=True)  # [N, 1]
+
+        # Negative similarities: [N, K]
+        neg_sim = torch.bmm(z_negs, z_ref.unsqueeze(2)).squeeze(2)  # [N, K]
+
+        # Concatenate logits: [N, 1 + K]
+        logits = torch.cat([pos_sim, neg_sim], dim=1) / self.temperature
+
+        # Labels: positive is always index 0
+        labels = torch.zeros(N, dtype=torch.long, device=z_ref.device)
+
+        return F.cross_entropy(logits, labels)
+
 
 
 

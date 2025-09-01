@@ -27,7 +27,7 @@ flower_model = train_reversible_flower(
     input_dim=3,           # x, y, z
     hidden_dim=32,
     output_dim=8,          # or 3 if you want to directly visualize
-    num_layers=4,
+    num_layers=3,
     num_frequencies=6,
     omega_init_range=(1.0, 60.0),
     epochs=2000,
@@ -41,7 +41,7 @@ animate_embedding_3d_reversible_flower(
     input_dim=3,
     hidden_dim=32,
     output_dim=8,
-    num_layers=4,
+    num_layers=3,
     num_frequencies=6,
     omega_init_range=(1.0, 60.0),
     title="Lorenz Flow in Flower Latent Space",
